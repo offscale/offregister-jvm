@@ -4,6 +4,6 @@
 from logging import getLogger
 
 __author__ = "Samuel Marks"
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 root_logger = getLogger()
