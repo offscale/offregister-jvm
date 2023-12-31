@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 
-from ast import parse
-from os import path
-from sys import version_info
+"""
+setup.py implementation, interesting because it parsed the first __init__.py and
+    extracts the `__author__` and `__version__`
+"""
 
+from ast import Assign, Name, parse
+from functools import partial
+from operator import attrgetter
+from os import listdir, path
+from os.path import extsep
+import sys
 from setuptools import find_packages, setup
 
 if sys.version_info[:2] >= (3, 12):
@@ -73,106 +80,120 @@ if sys.version_info[:2] >= (3, 12):
                 "I don't know where Python installs its library "
                 "on platform '%s'" % os.name
             )
-
+    from ast import Del as Str
 else:
     from distutils.sysconfig import get_python_lib
+    from ast import Str
 
-if sys.version_info[:2] >= (3, 12):
-    import os
-    from sysconfig import _BASE_EXEC_PREFIX as BASE_EXEC_PREFIX
-    from sysconfig import _BASE_PREFIX as BASE_PREFIX
-    from sysconfig import _EXEC_PREFIX as EXEC_PREFIX
-    from sysconfig import _PREFIX as PREFIX
-    from sysconfig import get_python_version
+if sys.version_info[0] == 2:
+    from itertools import ifilter as filter
+    from itertools import imap as map
 
-    def is_virtual_environment():
-        """
-        Whether one is in a virtual environment
-        """
-        return sys.base_prefix != sys.prefix or hasattr(sys, "real_prefix")
+if sys.version_info[:2] > (3, 7):
+    from ast import Constant
+else:
+    from ast import expr
 
-    def get_python_lib(plat_specific=0, standard_lib=0, prefix=None):
-        """Return the directory containing the Python library (standard or
-        site additions).
+    # Constant. Will never be used in Python =< 3.8
+    Constant = type("Constant", (expr,), {})
 
-        If 'plat_specific' is true, return the directory containing
-        platform-specific modules, i.e. any module from a non-pure-Python
-        module distribution; otherwise, return the platform-shared library
-        directory.  If 'standard_lib' is true, return the directory
-        containing standard Python library modules; otherwise, return the
-        directory for site-specific modules.
 
-        If 'prefix' is supplied, use it instead of sys.base_prefix or
-        sys.base_exec_prefix -- i.e., ignore 'plat_specific'.
-        """
-        is_default_prefix = not prefix or os.path.normpath(prefix) in (
-            "/usr",
-            "/usr/local",
+package_name_verbatim = "offregister-jvm"
+package_name = package_name_verbatim.replace("-", "_")
+
+with open(
+    path.join(path.dirname(__file__), "README{extsep}md".format(extsep=extsep)),
+    "rt",
+) as fh:
+    long_description = fh.read()
+
+
+def to_funcs(*paths):
+    """
+    Produce function tuples that produce the local and install dir, respectively.
+
+    :param paths: one or more str, referring to relative folder names
+    :type paths: ```*paths```
+
+    :return: 2 functions
+    :rtype: ```Tuple[Callable[Optional[List[str]], str], Callable[Optional[List[str]], str]]```
+    """
+    return (
+        partial(path.join, path.dirname(__file__), package_name, *paths),
+        partial(path.join, get_python_lib(prefix=""), package_name, *paths),
+    )
+
+
+def main():
+    """Main function for setup.py; this actually does the installation"""
+    with open(
+        path.join(
+            path.abspath(path.dirname(__file__)),
+            package_name,
+            "__init__{extsep}py".format(extsep=extsep),
         )
-        if prefix is None:
-            if standard_lib:
-                prefix = plat_specific and BASE_EXEC_PREFIX or BASE_PREFIX
-            else:
-                prefix = plat_specific and EXEC_PREFIX or PREFIX
+    ) as f:
+        parsed_init = parse(f.read())
 
-        if os.name == "posix":
-            if plat_specific or standard_lib:
-                # Platform-specific modules (any module from a non-pure-Python
-                # module distribution) or standard Python library modules.
-                libdir = sys.platlibdir
-            else:
-                # Pure Python
-                libdir = "lib"
-            libpython = os.path.join(prefix, libdir, "python" + get_python_version())
-            if standard_lib:
-                return libpython
-            elif is_default_prefix and not is_virtual_environment():
-                return os.path.join(prefix, "lib", "python3", "dist-packages")
-            else:
-                return os.path.join(libpython, "site-packages")
-        elif os.name == "nt":
-            if standard_lib:
-                return os.path.join(prefix, "Lib")
-            else:
-                return os.path.join(prefix, "Lib", "site-packages")
-        else:
-
-            class DistutilsPlatformError(Exception):
-                """DistutilsPlatformError"""
-
-            raise DistutilsPlatformError(
-                "I don't know where Python installs its library "
-                "on platform '%s'" % os.name
-            )
-
-else:
-    from distutils.sysconfig import get_python_lib
-
-if python_version_tuple()[0] == "3":
-    imap = map
-    ifilter = filter
-else:
-    from itertools import ifilter, imap
-
-if __name__ == "__main__":
-    package_name = "offregister_jvm"
-
-    with open(path.join(package_name, "__init__.py")) as f:
-        __author__, __version__ = imap(
-            lambda buf: next(imap(lambda e: e.value.s, parse(buf).body)),
-            ifilter(
-                lambda line: line.startswith("__version__")
-                or line.startswith("__author__"),
-                f,
+    __author__, __version__, __description__ = map(
+        lambda node: node.value if isinstance(node, Constant) else node.s,
+        filter(
+            lambda node: isinstance(node, (Constant, Str)),
+            map(
+                attrgetter("value"),
+                filter(
+                    lambda node: isinstance(node, Assign)
+                    and any(
+                        filter(
+                            lambda name: isinstance(name, Name) and name.id
+                            in frozenset(
+                                ("__author__", "__version__", "__description__")
+                            ),
+                            node.targets,
+                        )
+                    ),
+                    parsed_init.body,
+                ),
             ),
-        )
+        ),
+    )
 
     setup(
-        name=package_name,
+        name=package_name_verbatim,
         author=__author__,
         version=__version__,
-        install_requires=[],
+        description=__description__,
+        classifiers=[
+            "Development Status :: 7 - Inactive",
+            "Intended Audience :: Developers",
+            "Topic :: Software Development",
+            "Topic :: Software Development :: Libraries :: Python Modules",
+            "License :: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
+            "License :: OSI Approved :: Apache Software License",
+            "License :: OSI Approved :: MIT License",
+            "Programming Language :: Python",
+            "Programming Language :: Python :: 2",
+            "Programming Language :: Python :: 2.7",
+            "Programming Language :: Python :: 3",
+            "Programming Language :: Python :: 3.5",
+            "Programming Language :: Python :: 3.6",
+            "Programming Language :: Python :: 3.7",
+            "Programming Language :: Python :: 3.8",
+            "Programming Language :: Python :: 3.9",
+            "Programming Language :: Python :: 3.10",
+            "Programming Language :: Python :: 3.11",
+            "Programming Language :: Python :: 3.12",
+        ],
         test_suite=package_name + ".tests",
         packages=find_packages(),
-        package_dir={package_name: package_name},
+        package_dir={package_name: package_name}
     )
+
+
+def setup_py_main():
+    """Calls main if `__name__ == '__main__'`"""
+    if __name__ == "__main__":
+        main()
+
+
+setup_py_main()
